@@ -1,0 +1,30 @@
+# AI Tech Writer - Default Configuration
+
+llm:
+  default_model: "claude-sonnet-4-20250514"
+  temperature: 0.7
+  max_tokens: 4096
+
+pipeline:
+  stages:
+    - ideation
+    - outline
+    - draft
+    - review
+  max_revisions: 3
+  revision_threshold: 8.0  # スコアがこの値以上なら改善ループを終了（1-10）
+  save_intermediate: true
+
+output:
+  platform: "zenn"
+  default_emoji: "📝"
+  default_type: "tech"
+  output_dir: "outputs"
+
+web_search:
+  provider: "tavily"
+  num_results: 10
+  include_answer: true
+
+prompts:
+  dir: "config/prompts"

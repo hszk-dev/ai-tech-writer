@@ -1,0 +1,40 @@
+---
+title: {{ frontmatter.title }}
+tags:
+{% for topic in frontmatter.topics %}
+  - {{ topic }}
+{% endfor %}
+private: {{ (not frontmatter.published) | lower }}
+---
+
+{% for section in sections %}
+{{ '#' * section.level }} {{ section.heading }}
+
+{{ section.content }}
+
+{% for code in section.code_examples %}
+{% if code.description %}
+{{ code.description }}
+
+{% endif %}
+```{{ code.language }}{% if code.filename %}:{{ code.filename }}{% endif %}
+
+{{ code.code }}
+```
+{% if code.output %}
+
+実行結果:
+```
+{{ code.output }}
+```
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+{% if references %}
+## 参考文献
+
+{% for ref in references %}
+- {{ ref }}
+{% endfor %}
+{% endif %}

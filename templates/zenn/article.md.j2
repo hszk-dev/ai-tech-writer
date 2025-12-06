@@ -1,0 +1,39 @@
+---
+title: "{{ frontmatter.title }}"
+emoji: "{{ frontmatter.emoji }}"
+type: "{{ frontmatter.type.value }}"
+topics: [{% for topic in frontmatter.topics %}"{{ topic }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+published: {{ frontmatter.published | lower }}
+---
+
+{% for section in sections %}
+{{ '#' * section.level }} {{ section.heading }}
+
+{{ section.content }}
+
+{% for code in section.code_examples %}
+{% if code.description %}
+{{ code.description }}
+
+{% endif %}
+```{{ code.language }}{% if code.filename %}:{{ code.filename }}{% endif %}
+
+{{ code.code }}
+```
+{% if code.output %}
+
+実行結果:
+```
+{{ code.output }}
+```
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+{% if references %}
+## 参考文献
+
+{% for ref in references %}
+- {{ ref }}
+{% endfor %}
+{% endif %}
