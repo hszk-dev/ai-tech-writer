@@ -146,6 +146,14 @@ class ArticlePipeline:
 
                     # Save review feedback after review stage (all iterations)
                     if stage.name == "review":
+                        # Save code validation and execution results
+                        code_validation = context.get_artifact("code_validation")
+                        if code_validation:
+                            self._save_intermediate("code_validation", code_validation, intermediate_dir)
+                        code_execution = context.get_artifact("code_execution")
+                        if code_execution:
+                            self._save_intermediate("code_execution", code_execution, intermediate_dir)
+
                         # Save each iteration's feedback
                         max_revisions = self.config.get("pipeline", {}).get("max_revisions", 3)
                         for i in range(max_revisions):
@@ -158,7 +166,11 @@ class ArticlePipeline:
                             self._save_intermediate("review_feedback", review_feedback, intermediate_dir)
 
                 if self.verbose:
-                    self._display_stage_output(stage.name, output)
+                    if stage.name == "review":
+                        # For review, display feedback from context (not the article output)
+                        self._display_review_output(context)
+                    else:
+                        self._display_stage_output(stage.name, output)
 
             except Exception as e:
                 console.print(f"[red]✗[/red] {stage.name} failed: {e}")
@@ -231,30 +243,46 @@ class ArticlePipeline:
                 )
 
             elif stage_name == "review":
-                # Show review summary with iteration info
-                review_feedback = serialized if isinstance(serialized, dict) else {}
-                score = review_feedback.get("overall_score", "N/A")
-                strengths = review_feedback.get("strengths", [])
-                improvements = review_feedback.get("improvements", [])
-
-                strengths_text = "\n".join(f"  • {s}" for s in strengths[:3]) if strengths else "  (なし)"
-                improvements_text = "\n".join(
-                    f"  • {imp.get('suggestion', '')[:50]}..."
-                    for imp in improvements[:3]
-                ) if improvements else "  (なし)"
-
-                console.print(
-                    Panel(
-                        f"[bold]Score:[/bold] {score}/10\n\n"
-                        f"[bold]Strengths:[/bold]\n{strengths_text}\n\n"
-                        f"[bold]Improvements Applied:[/bold]\n{improvements_text}",
-                        title="[cyan]Review Output[/cyan]",
-                        border_style="cyan",
-                    )
-                )
+                # Note: output here is the Article, review feedback is in context
+                # This is handled by _display_review_output instead
+                pass
 
         except Exception as e:
             console.print(f"[yellow]Could not display {stage_name} output: {e}[/yellow]")
+
+    def _display_review_output(self, context: StageContext) -> None:
+        """Display review output from context artifacts."""
+        try:
+            review_feedback = context.get_artifact("review_feedback")
+            if not review_feedback or not isinstance(review_feedback, dict):
+                console.print("[yellow]No review feedback available[/yellow]")
+                return
+
+            score = review_feedback.get("overall_score", "N/A")
+            strengths = review_feedback.get("strengths", [])
+            improvements = review_feedback.get("improvements", [])
+            code_issues = review_feedback.get("code_issues", [])
+
+            strengths_text = "\n".join(f"  • {s}" for s in strengths[:3]) if strengths else "  (なし)"
+
+            # Combine improvements and code_issues for display
+            all_feedback = improvements + code_issues
+            feedback_text = "\n".join(
+                f"  • [{fb.get('section_index', '?')}] {fb.get('suggestion', fb.get('issue', ''))[:60]}..."
+                for fb in all_feedback[:5]
+            ) if all_feedback else "  (なし)"
+
+            console.print(
+                Panel(
+                    f"[bold]Score:[/bold] {score}/10\n\n"
+                    f"[bold]Strengths:[/bold]\n{strengths_text}\n\n"
+                    f"[bold]Feedback ({len(all_feedback)} items):[/bold]\n{feedback_text}",
+                    title="[cyan]Review Output[/cyan]",
+                    border_style="cyan",
+                )
+            )
+        except Exception as e:
+            console.print(f"[yellow]Could not display review output: {e}[/yellow]")
 
     def _build_article(self, context: StageContext) -> Article:
         """Build final article from stage outputs.
