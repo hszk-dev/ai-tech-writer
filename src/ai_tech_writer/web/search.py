@@ -1,9 +1,16 @@
 """Web search providers for gathering information."""
 
+import hashlib
+import json
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ..llm import LLMClient
 
 
 @dataclass
@@ -15,6 +22,16 @@ class SearchResult:
     snippet: str
     content: Optional[str] = None  # Full page content if available
     score: float = 0.0
+
+
+@dataclass
+class CacheEntry:
+    """Cache entry for search results."""
+
+    query: str
+    results: list[dict]
+    timestamp: str
+    ttl_hours: int = 24
 
 
 class WebSearchProvider(ABC):
@@ -166,23 +183,200 @@ class NoOpSearchProvider(WebSearchProvider):
         return []
 
 
-def create_search_provider(config: dict) -> WebSearchProvider:
+class CachedSearchProvider(WebSearchProvider):
+    """Wrapper that adds caching to any search provider."""
+
+    def __init__(
+        self,
+        provider: WebSearchProvider,
+        cache_dir: Optional[Path] = None,
+        ttl_hours: int = 24,
+    ):
+        """Initialize cached search provider.
+
+        Args:
+            provider: Underlying search provider
+            cache_dir: Directory to store cache files
+            ttl_hours: Cache time-to-live in hours
+        """
+        self.provider = provider
+        self.cache_dir = cache_dir or Path(".cache/search")
+        self.ttl_hours = ttl_hours
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_cache_key(self, query: str, num_results: int) -> str:
+        """Generate cache key from query."""
+        key_str = f"{query}:{num_results}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _get_cache_path(self, cache_key: str) -> Path:
+        """Get path to cache file."""
+        return self.cache_dir / f"{cache_key}.json"
+
+    def _is_cache_valid(self, cache_path: Path) -> bool:
+        """Check if cache is still valid."""
+        if not cache_path.exists():
+            return False
+
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                entry = json.load(f)
+            timestamp = datetime.fromisoformat(entry["timestamp"])
+            ttl = timedelta(hours=entry.get("ttl_hours", self.ttl_hours))
+            return datetime.now() - timestamp < ttl
+        except (json.JSONDecodeError, KeyError, ValueError):
+            return False
+
+    def _load_cache(self, cache_path: Path) -> list[SearchResult]:
+        """Load results from cache."""
+        with open(cache_path, encoding="utf-8") as f:
+            entry = json.load(f)
+        return [
+            SearchResult(
+                title=r["title"],
+                url=r["url"],
+                snippet=r["snippet"],
+                content=r.get("content"),
+                score=r.get("score", 0.0),
+            )
+            for r in entry["results"]
+        ]
+
+    def _save_cache(self, cache_path: Path, query: str, results: list[SearchResult]) -> None:
+        """Save results to cache."""
+        entry = CacheEntry(
+            query=query,
+            results=[asdict(r) for r in results],
+            timestamp=datetime.now().isoformat(),
+            ttl_hours=self.ttl_hours,
+        )
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(asdict(entry), f, ensure_ascii=False, indent=2)
+
+    async def search(
+        self,
+        query: str,
+        num_results: int = 10,
+    ) -> list[SearchResult]:
+        """Search with caching.
+
+        Args:
+            query: Search query
+            num_results: Maximum number of results
+
+        Returns:
+            List of search results (from cache or fresh)
+        """
+        cache_key = self._get_cache_key(query, num_results)
+        cache_path = self._get_cache_path(cache_key)
+
+        # Return cached results if valid
+        if self._is_cache_valid(cache_path):
+            return self._load_cache(cache_path)
+
+        # Fetch fresh results
+        results = await self.provider.search(query, num_results)
+
+        # Cache the results
+        self._save_cache(cache_path, query, results)
+
+        return results
+
+
+class QueryOptimizer:
+    """Optimizes search queries using LLM."""
+
+    def __init__(self, llm_client: "LLMClient"):
+        """Initialize query optimizer.
+
+        Args:
+            llm_client: LLM client for query optimization
+        """
+        self.llm_client = llm_client
+
+    async def optimize_query(self, topic: str, context: Optional[str] = None) -> list[str]:
+        """Generate optimized search queries for a topic.
+
+        Args:
+            topic: Original topic
+            context: Additional context (e.g., target audience)
+
+        Returns:
+            List of optimized search queries
+        """
+        from ..llm import Message
+
+        context_text = f"\n追加コンテキスト: {context}" if context else ""
+
+        prompt = f"""以下のトピックについて技術記事を書くための、効果的なWeb検索クエリを3つ生成してください。
+
+トピック: {topic}{context_text}
+
+検索クエリの生成ルール:
+1. 日本語と英語の両方を考慮する
+2. 具体的な技術用語を含める
+3. 「チュートリアル」「入門」「ベストプラクティス」などの修飾語を適切に使う
+4. 公式ドキュメントや信頼性の高い情報源を見つけやすいクエリにする
+
+JSON形式で回答してください：
+```json
+{{
+  "queries": [
+    "検索クエリ1",
+    "検索クエリ2",
+    "検索クエリ3"
+  ],
+  "reasoning": "これらのクエリを選んだ理由"
+}}
+```
+"""
+
+        messages = [
+            Message(
+                role="system",
+                content="あなたは効果的な検索クエリを生成する専門家です。技術記事を書くための情報収集に最適な検索クエリを提案してください。",
+            ),
+            Message(role="user", content=prompt),
+        ]
+
+        result = await self.llm_client.complete_json(messages)
+        return result.get("queries", [f"{topic} 技術記事"])
+
+
+def create_search_provider(
+    config: dict,
+    enable_cache: bool = True,
+    cache_dir: Optional[Path] = None,
+) -> WebSearchProvider:
     """Create a search provider from configuration.
 
     Args:
         config: Web search configuration
+        enable_cache: Whether to enable caching
+        cache_dir: Directory for cache files
 
     Returns:
         Configured search provider
     """
-    provider = config.get("provider", "tavily")
+    provider_name = config.get("provider", "tavily")
 
-    if provider == "tavily":
-        return TavilySearchProvider(
+    if provider_name == "tavily":
+        provider = TavilySearchProvider(
             include_answer=config.get("include_answer", True),
             search_depth=config.get("search_depth", "basic"),
         )
-    elif provider == "none":
+    elif provider_name == "none":
         return NoOpSearchProvider()
     else:
-        raise ValueError(f"Unknown search provider: {provider}")
+        raise ValueError(f"Unknown search provider: {provider_name}")
+
+    # Wrap with cache if enabled
+    if enable_cache and provider_name != "none":
+        cache_ttl = config.get("cache_ttl_hours", 24)
+        provider = CachedSearchProvider(
+            provider=provider,
+            cache_dir=cache_dir or Path(".cache/search"),
+            ttl_hours=cache_ttl,
+        )
+
+    return provider
