@@ -42,3 +42,42 @@ web_search:
 
 prompts:
   dir: "config/prompts"
+
+# Tree Search settings (--treesearch オプション使用時)
+treesearch:
+  enabled: false              # デフォルトは無効
+  max_iterations: 10          # 最大イテレーション数
+  beam_width: 3               # 同時展開ノード数
+  max_depth: 4                # 最大探索深度
+  score_threshold: 8.5        # この値以上で探索終了（1-10）
+  parallel_workers: 3         # 並列ワーカー数
+  rate_limit_per_minute: 20   # LLM APIコール制限（/分）
+  max_nodes: 100              # 最大ノード数
+  prune_keep_top: 20          # 枝刈り時に保持する上位ノード数
+
+# Project Analysis settings (--project オプション使用時)
+project_analysis:
+  enabled: true               # プロジェクト分析機能の有効化
+  max_files: 100              # 分析対象の最大ファイル数
+  include_patterns:           # 分析対象ファイルパターン
+    - "*.py"
+    - "*.ts"
+    - "*.tsx"
+    - "*.js"
+    - "*.jsx"
+    - "*.go"
+    - "*.rs"
+    - "*.java"
+    - "*.rb"
+  exclude_patterns:           # 除外パターン
+    - "node_modules/**"
+    - ".git/**"
+    - "__pycache__/**"
+    - "*.lock"
+    - ".venv/**"
+    - "venv/**"
+    - "dist/**"
+    - "build/**"
+  analysis_depth: "standard"  # quick/standard/comprehensive
+  cache_enabled: true         # 分析結果のキャッシュ
+  cache_ttl_hours: 168        # キャッシュ有効期限（168時間 = 1週間）
