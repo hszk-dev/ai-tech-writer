@@ -1,18 +1,16 @@
 """Review stage - reviews and improves the article draft."""
 
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 from ..llm import Message
-from ..models import Article, ArticleSection, CodeExample
+from ..llm.schemas import IMPROVE_SECTION_SCHEMA, REVIEW_SCHEMA
+from ..models import Article, ArticleSection
 from ..sandbox import (
-    CodeValidator,
-    ValidationResult,
-    validate_code_blocks,
     DockerSandbox,
-    ExecutionResult,
     get_language_config,
+    validate_code_blocks,
 )
 from .base import PipelineStage, StageContext
 
@@ -125,7 +123,10 @@ class ReviewStage(PipelineStage[Article, Article]):
         # Save final feedback after all iterations
         context.save_artifact("review_feedback", all_feedback[-1] if all_feedback else {})
         context.save_artifact("review_iterations", max_revisions)
-        context.save_artifact("final_score", float(all_feedback[-1].get("overall_score", 0)) if all_feedback else 0)
+        final_score = 0.0
+        if all_feedback:
+            final_score = float(all_feedback[-1].get("overall_score", 0))
+        context.save_artifact("final_score", final_score)
 
         return current_article
 
@@ -150,12 +151,14 @@ class ReviewStage(PipelineStage[Article, Article]):
                 valid_count += 1
             else:
                 invalid_count += 1
-                errors.append({
-                    "language": result.language,
-                    "error": result.error_message,
-                    "line": result.line_number,
-                    "suggestions": result.suggestions or [],
-                })
+                errors.append(
+                    {
+                        "language": result.language,
+                        "error": result.error_message,
+                        "line": result.line_number,
+                        "suggestions": result.suggestions or [],
+                    }
+                )
 
         return CodeValidationSummary(
             total_blocks=len(results),
@@ -218,9 +221,11 @@ class ReviewStage(PipelineStage[Article, Article]):
                 continue
 
             # Check if language is in allowed list (if specified)
-            if allowed_languages and language.lower() not in [l.lower() for l in allowed_languages]:
-                skipped += 1
-                continue
+            if allowed_languages:
+                allowed_lower = [lang.lower() for lang in allowed_languages]
+                if language.lower() not in allowed_lower:
+                    skipped += 1
+                    continue
 
             # Check if language has Docker support
             lang_config = get_language_config(language)
@@ -279,13 +284,15 @@ class ReviewStage(PipelineStage[Article, Article]):
         code_validation_text = ""
         if code_validation and code_validation.invalid_blocks > 0:
             code_validation_text = "\n\n## コード検証結果（構文チェック）\n"
-            code_validation_text += f"検証済みコードブロック: {code_validation.total_blocks}\n"
-            code_validation_text += f"有効: {code_validation.valid_blocks}, 無効: {code_validation.invalid_blocks}\n"
+            code_validation_text += f"検証済みブロック: {code_validation.total_blocks}\n"
+            valid = code_validation.valid_blocks
+            invalid = code_validation.invalid_blocks
+            code_validation_text += f"有効: {valid}, 無効: {invalid}\n"
             if code_validation.errors:
                 code_validation_text += "\n### 構文エラー:\n"
                 for err in code_validation.errors:
                     code_validation_text += f"- [{err['language']}] {err['error']}"
-                    if err.get('line'):
+                    if err.get("line"):
                         code_validation_text += f" (行: {err['line']})"
                     code_validation_text += "\n"
 
@@ -294,17 +301,21 @@ class ReviewStage(PipelineStage[Article, Article]):
         if code_execution and code_execution.total_executed > 0:
             code_execution_text = "\n\n## コード実行結果（Docker sandbox）\n"
             code_execution_text += f"実行済み: {code_execution.total_executed}, "
-            code_execution_text += f"成功: {code_execution.successful}, 失敗: {code_execution.failed}, "
+            code_execution_text += f"成功: {code_execution.successful}, "
+            code_execution_text += f"失敗: {code_execution.failed}, "
             code_execution_text += f"スキップ: {code_execution.skipped}\n"
             if code_execution.failed > 0:
                 code_execution_text += "\n### 実行エラー:\n"
                 for result in code_execution.results:
                     if not result.get("success"):
-                        code_execution_text += f"- [ブロック{result.get('block_index', '?')}] [{result.get('language', '?')}] "
+                        block_idx = result.get("block_index", "?")
+                        lang = result.get("language", "?")
+                        code_execution_text += f"- [ブロック{block_idx}] [{lang}] "
                         if result.get("timed_out"):
                             code_execution_text += "タイムアウト\n"
                         else:
-                            code_execution_text += f"{result.get('error', 'Unknown error')[:200]}\n"
+                            err_msg = result.get("error", "Unknown error")[:200]
+                            code_execution_text += f"{err_msg}\n"
 
         prompt = context.prompt_loader.load(
             "review",
@@ -323,7 +334,7 @@ class ReviewStage(PipelineStage[Article, Article]):
             Message(role="user", content=prompt),
         ]
 
-        return await context.llm_client.complete_json(messages)
+        return await context.llm_client.complete_json(messages, schema=REVIEW_SCHEMA)
 
     async def _apply_improvements(
         self,
@@ -353,16 +364,11 @@ class ReviewStage(PipelineStage[Article, Article]):
         improved_sections = []
 
         for i, section in enumerate(article.sections):
-            section_feedback = [
-                fb for fb in all_feedback
-                if fb.get("section_index") == i
-            ]
+            section_feedback = [fb for fb in all_feedback if fb.get("section_index") == i]
 
             if section_feedback:
                 # Regenerate this section with improvements
-                improved_section = await self._improve_section(
-                    section, section_feedback, context
-                )
+                improved_section = await self._improve_section(section, section_feedback, context)
                 improved_sections.append(improved_section)
             else:
                 improved_sections.append(section)
@@ -432,7 +438,7 @@ JSON形式で回答してください：
             Message(role="user", content=prompt),
         ]
 
-        result = await context.llm_client.complete_json(messages)
+        result = await context.llm_client.complete_json(messages, schema=IMPROVE_SECTION_SCHEMA)
 
         return ArticleSection(
             heading=section.heading,

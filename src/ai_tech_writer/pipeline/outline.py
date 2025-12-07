@@ -1,6 +1,7 @@
 """Outline stage - creates detailed article outline from idea."""
 
 from ..llm import Message
+from ..llm.schemas import OUTLINE_SCHEMA, ArticleOutlineOutput
 from ..models import ArticleIdea, ArticleOutline, OutlineSection
 from .base import PipelineStage, StageContext
 
@@ -31,9 +32,7 @@ class OutlineStage(PipelineStage[ArticleIdea, ArticleOutline]):
             target_audience=input_data.target_audience,
             problem_to_solve=input_data.problem_to_solve,
             key_takeaways="\n".join(f"- {t}" for t in input_data.key_takeaways),
-            suggested_sections="\n".join(
-                f"- {s}" for s in input_data.suggested_sections
-            ),
+            suggested_sections="\n".join(f"- {s}" for s in input_data.suggested_sections),
         )
 
         messages = [
@@ -41,25 +40,25 @@ class OutlineStage(PipelineStage[ArticleIdea, ArticleOutline]):
             Message(role="user", content=prompt),
         ]
 
-        result = await context.llm_client.complete_json(messages)
+        result = await context.llm_client.complete_json(messages, schema=OUTLINE_SCHEMA)
+        validated = ArticleOutlineOutput.model_validate(result)
 
-        # Parse sections
-        sections = []
-        for s in result.get("sections", []):
-            sections.append(
-                OutlineSection(
-                    heading=s.get("heading", ""),
-                    key_points=s.get("key_points", []),
-                    code_needed=s.get("code_needed", False),
-                    estimated_words=s.get("estimated_words", 200),
-                )
+        # Parse sections from validated output
+        sections = [
+            OutlineSection(
+                heading=s.heading,
+                key_points=s.key_points,
+                code_needed=s.code_needed,
+                estimated_words=s.estimated_words,
             )
+            for s in validated.sections
+        ]
 
         return ArticleOutline(
             idea=input_data,
             sections=sections,
-            introduction=result.get("introduction", ""),
-            conclusion_points=result.get("conclusion_points", []),
+            introduction=validated.introduction,
+            conclusion_points=validated.conclusion_points,
         )
 
     def validate_input(self, input_data: ArticleIdea) -> bool:

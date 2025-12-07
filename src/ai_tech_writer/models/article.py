@@ -43,12 +43,12 @@ published: {str(self.published).lower()}
     def to_qiita_frontmatter(self) -> str:
         """Convert to Qiita frontmatter format."""
         tags = "\n".join(f"  - {t}" for t in self.topics[:5])
-        return f'''---
+        return f"""---
 title: {self.title}
 tags:
 {tags}
 private: {str(not self.published).lower()}
----'''
+---"""
 
 
 @dataclass
@@ -150,6 +150,14 @@ class ArticleIdea:
     problem_to_solve: str
     key_takeaways: list[str]
     suggested_sections: list[str]
+    # バズ・新規性関連（オプション）
+    novelty_points: list[str] = field(default_factory=list)
+    buzz_factors: list[str] = field(default_factory=list)
+    trend_relevance: str = "medium"  # high/medium/low
+    hook_elements: list[str] = field(default_factory=list)
+    # プロジェクトベース記事用（オプション）
+    code_references: list[dict[str, str]] = field(default_factory=list)
+    project_context: Optional[str] = None
 
 
 @dataclass

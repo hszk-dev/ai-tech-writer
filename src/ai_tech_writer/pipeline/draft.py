@@ -1,6 +1,14 @@
 """Draft stage - writes full article from outline."""
 
+from typing import Union
+
 from ..llm import Message
+from ..llm.schemas import (
+    SECTION_SCHEMA,
+    SECTION_WITH_CODE_SCHEMA,
+    SectionContentOutput,
+    SectionWithCodeOutput,
+)
 from ..models import (
     Article,
     ArticleFrontmatter,
@@ -46,7 +54,7 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
         sections = []
 
         # Introduction
-        intro_content = await self._generate_section(
+        intro_result = await self._generate_section(
             context=context,
             section_title="はじめに",
             section_context=input_data.introduction,
@@ -57,7 +65,7 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
             ArticleSection(
                 heading="はじめに",
                 level=2,
-                content=intro_content["content"],
+                content=intro_result.content,
                 code_examples=[],
             )
         )
@@ -67,21 +75,19 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
             section_result = await self._generate_section(
                 context=context,
                 section_title=outline_section.heading,
-                section_context="\n".join(
-                    f"- {p}" for p in outline_section.key_points
-                ),
+                section_context="\n".join(f"- {p}" for p in outline_section.key_points),
                 outline=input_data,
                 needs_code=outline_section.code_needed,
             )
 
             code_examples = []
-            if section_result.get("code_examples"):
-                for code in section_result["code_examples"]:
+            if isinstance(section_result, SectionWithCodeOutput):
+                for code in section_result.code_examples:
                     code_examples.append(
                         CodeExample(
-                            language=code.get("language", "python"),
-                            code=code.get("code", ""),
-                            description=code.get("description", ""),
+                            language=code.language,
+                            code=code.code,
+                            description=code.description,
                         )
                     )
 
@@ -89,18 +95,16 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
                 ArticleSection(
                     heading=outline_section.heading,
                     level=2,
-                    content=section_result["content"],
+                    content=section_result.content,
                     code_examples=code_examples,
                 )
             )
 
         # Conclusion
-        conclusion_content = await self._generate_section(
+        conclusion_result = await self._generate_section(
             context=context,
             section_title="まとめ",
-            section_context="\n".join(
-                f"- {p}" for p in input_data.conclusion_points
-            ),
+            section_context="\n".join(f"- {p}" for p in input_data.conclusion_points),
             outline=input_data,
             is_conclusion=True,
         )
@@ -108,7 +112,7 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
             ArticleSection(
                 heading="まとめ",
                 level=2,
-                content=conclusion_content["content"],
+                content=conclusion_result.content,
                 code_examples=[],
             )
         )
@@ -128,7 +132,7 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
         is_intro: bool = False,
         is_conclusion: bool = False,
         needs_code: bool = False,
-    ) -> dict:
+    ) -> Union[SectionContentOutput, SectionWithCodeOutput]:
         """Generate a single section.
 
         Args:
@@ -141,7 +145,7 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
             needs_code: Whether code examples are needed
 
         Returns:
-            Dict with content and optional code_examples
+            Validated section output
         """
         prompt = context.prompt_loader.load(
             "draft",
@@ -159,7 +163,15 @@ class DraftStage(PipelineStage[ArticleOutline, Article]):
             Message(role="user", content=prompt),
         ]
 
-        return await context.llm_client.complete_json(messages)
+        # Use schema to enforce structured output
+        if needs_code:
+            result = await context.llm_client.complete_json(
+                messages, schema=SECTION_WITH_CODE_SCHEMA
+            )
+            return SectionWithCodeOutput.model_validate(result)
+        else:
+            result = await context.llm_client.complete_json(messages, schema=SECTION_SCHEMA)
+            return SectionContentOutput.model_validate(result)
 
     def validate_input(self, input_data: ArticleOutline) -> bool:
         """Validate that we have a valid outline."""
