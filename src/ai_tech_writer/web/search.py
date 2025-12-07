@@ -4,13 +4,15 @@ import hashlib
 import json
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..llm import LLMClient
+
+from ..llm.schemas import QUERY_OPTIMIZATION_SCHEMA, QueryOptimizationOutput
 
 
 @dataclass
@@ -308,7 +310,7 @@ class QueryOptimizer:
 
         context_text = f"\n追加コンテキスト: {context}" if context else ""
 
-        prompt = f"""以下のトピックについて技術記事を書くための、効果的なWeb検索クエリを3つ生成してください。
+        prompt = f"""以下のトピックについて技術記事を書くための検索クエリを3つ生成してください。
 
 トピック: {topic}{context_text}
 
@@ -339,8 +341,9 @@ JSON形式で回答してください：
             Message(role="user", content=prompt),
         ]
 
-        result = await self.llm_client.complete_json(messages)
-        return result.get("queries", [f"{topic} 技術記事"])
+        result = await self.llm_client.complete_json(messages, schema=QUERY_OPTIMIZATION_SCHEMA)
+        validated = QueryOptimizationOutput.model_validate(result)
+        return validated.queries if validated.queries else [f"{topic} 技術記事"]
 
 
 def create_search_provider(

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .languages import LanguageConfig, get_language_config
+from .languages import get_language_config
 
 
 @dataclass
@@ -90,16 +90,23 @@ class DockerSandbox:
             # Build Docker command
             container_name = f"sandbox-{uuid.uuid4().hex[:8]}"
             docker_cmd = [
-                "docker", "run",
+                "docker",
+                "run",
                 "--rm",
-                "--name", container_name,
-                "--memory", self.memory_limit,
+                "--name",
+                container_name,
+                "--memory",
+                self.memory_limit,
                 f"--cpus={self.cpu_limit}",
-                "--network", "none",  # No network access
+                "--network",
+                "none",  # No network access
                 "--read-only",  # Read-only filesystem
-                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-                "-v", f"{tmpdir}:/code:ro",
-                "-w", "/code",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=64m",
+                "-v",
+                f"{tmpdir}:/code:ro",
+                "-w",
+                "/code",
                 config.docker_image,
             ]
 

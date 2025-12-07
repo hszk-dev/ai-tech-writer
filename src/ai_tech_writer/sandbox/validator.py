@@ -9,7 +9,7 @@ from typing import Optional
 
 import yaml
 
-from .languages import LanguageConfig, get_language_config
+from .languages import get_language_config
 
 
 @dataclass
@@ -110,17 +110,17 @@ class CodeValidator:
         errors = []
 
         # Check for common issues
-        if code.count('{') != code.count('}'):
+        if code.count("{") != code.count("}"):
             errors.append("Mismatched curly braces")
-        if code.count('(') != code.count(')'):
+        if code.count("(") != code.count(")"):
             errors.append("Mismatched parentheses")
-        if code.count('[') != code.count(']'):
+        if code.count("[") != code.count("]"):
             errors.append("Mismatched square brackets")
 
         # Check for unclosed strings (simple check)
         single_quotes = len(re.findall(r"(?<!\\)'", code))
         double_quotes = len(re.findall(r'(?<!\\)"', code))
-        backticks = len(re.findall(r'(?<!\\)`', code))
+        backticks = len(re.findall(r"(?<!\\)`", code))
 
         if single_quotes % 2 != 0:
             errors.append("Unclosed single quote string")
@@ -169,7 +169,7 @@ class CodeValidator:
         except yaml.YAMLError as e:
             error_msg = str(e)
             line_num = None
-            if hasattr(e, 'problem_mark') and e.problem_mark:
+            if hasattr(e, "problem_mark") and e.problem_mark:
                 line_num = e.problem_mark.line + 1
 
             return ValidationResult(
