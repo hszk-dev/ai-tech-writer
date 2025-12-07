@@ -5,7 +5,7 @@ from typing import Any
 
 from ..llm import Message
 from ..models import ArticleIdea
-from ..web import TavilySearchProvider, create_search_provider
+from ..web import QueryOptimizer, TavilySearchProvider, create_search_provider
 from .base import PipelineStage, StageContext
 
 
@@ -31,7 +31,7 @@ class IdeationStage(PipelineStage[dict[str, str], ArticleIdea]):
         """
         topic = input_data.get("topic", "")
 
-        # Search for related information
+        # Search for related information (with optimized queries)
         search_results = await self._search_topic(topic, context)
 
         # Save search results as artifact for later inspection
@@ -70,7 +70,7 @@ class IdeationStage(PipelineStage[dict[str, str], ArticleIdea]):
         topic: str,
         context: StageContext,
     ) -> list[dict[str, Any]]:
-        """Search for information about the topic.
+        """Search for information about the topic using optimized queries.
 
         Args:
             topic: Topic to search for
@@ -81,24 +81,76 @@ class IdeationStage(PipelineStage[dict[str, str], ArticleIdea]):
         """
         web_config = context.config.get("web_search", {})
 
+        # Skip if provider is "none"
+        if web_config.get("provider") == "none":
+            return []
+
         try:
-            provider = create_search_provider(web_config)
-            results = await provider.search(
-                query=f"{topic} 技術記事 チュートリアル",
-                num_results=web_config.get("num_results", 10),
+            # Use query optimization if enabled
+            optimize_queries = web_config.get("optimize_queries", True)
+            if optimize_queries:
+                queries = await self._get_optimized_queries(topic, context)
+                context.save_artifact("search_queries", queries)
+            else:
+                queries = [f"{topic} 技術記事 チュートリアル"]
+
+            # Create search provider with caching
+            enable_cache = web_config.get("enable_cache", True)
+            provider = create_search_provider(
+                web_config,
+                enable_cache=enable_cache,
+                cache_dir=context.working_dir / ".cache" / "search",
             )
-            return [
-                {
-                    "title": r.title,
-                    "url": r.url,
-                    "snippet": r.snippet,
-                }
-                for r in results
-            ]
+
+            # Search with multiple queries and combine results
+            all_results: list[dict[str, Any]] = []
+            seen_urls: set[str] = set()
+            num_results = web_config.get("num_results", 10)
+
+            for query in queries:
+                results = await provider.search(
+                    query=query,
+                    num_results=num_results // len(queries) + 2,  # Get a few extra per query
+                )
+                for r in results:
+                    if r.url not in seen_urls:
+                        seen_urls.add(r.url)
+                        all_results.append({
+                            "title": r.title,
+                            "url": r.url,
+                            "snippet": r.snippet,
+                            "query": query,
+                        })
+
+            # Sort by score and limit results
+            return all_results[:num_results]
+
         except Exception as e:
             # Log error but continue without search results
             print(f"Web search failed: {e}")
             return []
+
+    async def _get_optimized_queries(
+        self,
+        topic: str,
+        context: StageContext,
+    ) -> list[str]:
+        """Get optimized search queries for the topic.
+
+        Args:
+            topic: Original topic
+            context: Pipeline context
+
+        Returns:
+            List of optimized queries
+        """
+        try:
+            optimizer = QueryOptimizer(context.llm_client)
+            return await optimizer.optimize_query(topic)
+        except Exception as e:
+            # Fall back to simple query if optimization fails
+            print(f"Query optimization failed: {e}")
+            return [f"{topic} 技術記事 チュートリアル"]
 
     def _format_search_results(self, results: list[dict[str, Any]]) -> str:
         """Format search results for prompt.
