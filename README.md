@@ -1,11 +1,12 @@
 # AI Tech Writer
 
-AI-powered technical article writer for Zenn/Qiita, inspired by [AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2).
+AI-powered technical article writer for Zenn/Qiita. The Tree Search feature is adapted from [AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2)'s experiment exploration architecture for article generation tasks.
 
 ## Features
 
 - **Automated Article Generation**: Generate complete technical articles from just a topic
 - **Multi-Stage Pipeline**: Ideation → Outline → Draft → Review
+- **Tree Search Mode**: Best-First Tree Search adapted from AI Scientist-v2 for higher quality generation
 - **Web Search Integration**: Uses Tavily API to gather latest information
 - **Multiple Platforms**: Supports Zenn and Qiita markdown formats
 - **Quality Review**: AI-powered review and improvement suggestions

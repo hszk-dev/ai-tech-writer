@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AI Tech Writer is an AI-powered technical article generator for Japanese tech platforms (Zenn/Qiita). It uses a multi-stage pipeline to generate complete articles from just a topic.
 
+The Tree Search feature adapts the exploration architecture from [AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2) (originally designed for experiment code exploration) to article generation tasks.
+
 ## Commands
 
 ```bash
@@ -65,7 +67,7 @@ Each stage extends `PipelineStage` (base.py) with `execute()` method. `ArticlePi
 - **QueryOptimizer** (`web/search.py`) - LLM-powered search query optimization
 - **CachedSearchProvider** (`web/search.py`) - Search result caching with configurable TTL
 - **CodeValidator** (`sandbox/validator.py`) - Syntax validation for Python, JS, JSON, YAML, Bash
-- **BFTSearch** (`treesearch/search.py`) - Best-First Tree Search for higher quality generation
+- **BFTSearch** (`treesearch/search.py`) - Best-First Tree Search adapted from AI Scientist-v2's experiment exploration for article generation
 - **ArticleEvaluator** (`treesearch/evaluator.py`) - LLM-based quality scoring (structure, accuracy, readability, practicality)
 - **SearchTree** (`treesearch/tree.py`) - Search tree management with pruning
 
