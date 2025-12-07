@@ -44,8 +44,11 @@ htmlcov/
 .mypy_cache/
 
 # Output
-outputs/*.md
-!outputs/.gitkeep
+outputs/
+intermediate/
+
+# Cache
+.cache/
 
 # Logs
 *.log
