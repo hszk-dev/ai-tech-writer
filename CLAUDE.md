@@ -22,6 +22,11 @@ ai-tech-writer generate "Pythonの基本" --skip-search  # Skip web search
 ai-tech-writer generate "TypeScript Tips" --skip-review  # Skip review stage
 ai-tech-writer generate "topic" --verbose  # Show detailed progress
 
+# Tree Search mode (higher quality, more API calls)
+ai-tech-writer generate "topic" --treesearch
+ai-tech-writer generate "topic" --treesearch --beam-width 5
+ai-tech-writer generate "topic" --treesearch --max-iterations 15
+
 # Other commands
 ai-tech-writer list-models
 ai-tech-writer init
@@ -60,6 +65,9 @@ Each stage extends `PipelineStage` (base.py) with `execute()` method. `ArticlePi
 - **QueryOptimizer** (`web/search.py`) - LLM-powered search query optimization
 - **CachedSearchProvider** (`web/search.py`) - Search result caching with configurable TTL
 - **CodeValidator** (`sandbox/validator.py`) - Syntax validation for Python, JS, JSON, YAML, Bash
+- **BFTSearch** (`treesearch/search.py`) - Best-First Tree Search for higher quality generation
+- **ArticleEvaluator** (`treesearch/evaluator.py`) - LLM-based quality scoring (structure, accuracy, readability, practicality)
+- **SearchTree** (`treesearch/tree.py`) - Search tree management with pruning
 
 ### Configuration
 
@@ -79,4 +87,10 @@ web_search:
   optimize_queries: true    # Use LLM to generate better search queries
   enable_cache: true        # Cache search results
   cache_ttl_hours: 24       # Cache validity period
+
+treesearch:
+  max_iterations: 10        # Maximum search iterations
+  beam_width: 3             # Number of nodes to expand per iteration
+  max_depth: 4              # Maximum tree depth
+  score_threshold: 8.5      # Stop when score reaches this threshold
 ```
