@@ -44,10 +44,10 @@ Required in `.env`:
 
 The core architecture is a sequential pipeline in `src/ai_tech_writer/pipeline/`:
 
-1. **IdeationStage** - Takes topic, searches web (Tavily), generates article idea (title, emoji, topics, target audience)
+1. **IdeationStage** - Takes topic, searches web (Tavily) with optimized queries, generates article idea (title, emoji, topics, target audience)
 2. **OutlineStage** - Creates detailed outline with sections and key points
 3. **DraftStage** - Writes full article content with code examples
-4. **ReviewStage** - Reviews and optionally improves the draft
+4. **ReviewStage** - Reviews, validates code, and iteratively improves the draft (up to max_revisions times)
 
 Each stage extends `PipelineStage` (base.py) with `execute()` method. `ArticlePipeline` (orchestrator.py) runs stages sequentially, passing `StageContext` with shared resources.
 
@@ -57,9 +57,26 @@ Each stage extends `PipelineStage` (base.py) with `execute()` method. `ArticlePi
 - **PromptLoader** (`llm/prompts.py`) - Loads Jinja2 prompt templates from `config/prompts/`
 - **Domain Models** (`models/article.py`) - `Article`, `ArticleFrontmatter`, `ArticleSection`, `ArticleIdea`, `ArticleOutline`
 - **MarkdownRenderer** (`output/markdown.py`) - Renders articles with platform-specific frontmatter (Zenn vs Qiita)
+- **QueryOptimizer** (`web/search.py`) - LLM-powered search query optimization
+- **CachedSearchProvider** (`web/search.py`) - Search result caching with configurable TTL
+- **CodeValidator** (`sandbox/validator.py`) - Syntax validation for Python, JS, JSON, YAML, Bash
 
 ### Configuration
 
 - `config/default.yaml` - Main config (model, temperature, web search settings)
 - `config/prompts/*.md` - Prompt templates for each pipeline stage
 - `templates/{zenn,qiita}/article.md.j2` - Jinja2 templates for output formatting
+
+### Key Configuration Options
+
+```yaml
+pipeline:
+  max_revisions: 3          # Maximum review iterations
+  revision_threshold: 8.0   # Score threshold to stop iterations (1-10)
+  validate_code: true       # Enable code block syntax validation
+
+web_search:
+  optimize_queries: true    # Use LLM to generate better search queries
+  enable_cache: true        # Cache search results
+  cache_ttl_hours: 24       # Cache validity period
+```

@@ -13,7 +13,18 @@ pipeline:
     - review
   max_revisions: 3
   revision_threshold: 8.0  # スコアがこの値以上なら改善ループを終了（1-10）
+  validate_code: true      # コードブロックの構文検証を行う
+  execute_code: false      # Dockerでコード実行検証を行う（要Docker）
   save_intermediate: true
+
+# Docker sandbox settings (execute_code: true の場合に使用)
+sandbox:
+  timeout: 30              # 実行タイムアウト（秒）
+  memory_limit: "256m"     # メモリ制限
+  cpu_limit: 0.5           # CPU制限（0.5 = 50%）
+  languages:               # 実行対象言語（空の場合は全対応言語）
+    - python
+    - javascript
 
 output:
   platform: "zenn"
@@ -25,6 +36,9 @@ web_search:
   provider: "tavily"
   num_results: 10
   include_answer: true
+  optimize_queries: true      # LLMで検索クエリを最適化
+  enable_cache: true          # 検索結果をキャッシュ
+  cache_ttl_hours: 24         # キャッシュの有効期限（時間）
 
 prompts:
   dir: "config/prompts"
