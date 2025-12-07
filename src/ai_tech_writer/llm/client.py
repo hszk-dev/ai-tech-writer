@@ -104,7 +104,7 @@ class LLMClient:
         response = await acompletion(**kwargs)
 
         return CompletionResponse(
-            content=response.choices[0].message.content,
+            content=response.choices[0].message.content or "",
             model=response.model,
             usage=dict(response.usage) if response.usage else {},
             finish_reason=response.choices[0].finish_reason or "",
@@ -116,6 +116,7 @@ class LLMClient:
         config: Optional[CompletionConfig] = None,
         max_retries: int = 3,
         use_json_mode: bool = True,
+        schema: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Generate a completion and parse as JSON.
 
@@ -124,6 +125,7 @@ class LLMClient:
             config: Optional completion configuration
             max_retries: Maximum number of retries for JSON parsing failures
             use_json_mode: Whether to use JSON mode (response_format)
+            schema: Optional JSON schema to enforce structured output
 
         Returns:
             Parsed JSON as dict
@@ -131,17 +133,26 @@ class LLMClient:
         Raises:
             json.JSONDecodeError: If response is not valid JSON after retries
         """
-        import re
-
         last_error = None
 
-        # Use JSON mode if supported
-        response_format = {"type": "json_object"} if use_json_mode else None
+        if config is None:
+            config = CompletionConfig(
+                model=self.default_model,
+                temperature=self.default_temperature,
+                max_tokens=self.default_max_tokens,
+            )
+
+        # For Claude models with schema, use tool_use for structured output
+        if schema and self._is_anthropic_model(config.model):
+            return await self._complete_with_tool_use(messages, config, schema, max_retries)
+
+        # Build response_format based on model and schema
+        response_format = self._build_response_format(config.model, schema, use_json_mode)
 
         for attempt in range(max_retries):
             try:
                 response = await self.complete(messages, config, response_format)
-            except Exception as e:
+            except Exception:
                 # If JSON mode fails (unsupported model), fall back to normal mode
                 if use_json_mode and attempt == 0:
                     response_format = None
@@ -211,8 +222,8 @@ class LLMClient:
 
         # Strategy 3: Find JSON object in text using regex
         json_patterns = [
-            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Simple nested objects
-            r'\{[\s\S]*\}',  # Any content between outermost braces
+            r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",  # Simple nested objects
+            r"\{[\s\S]*\}",  # Any content between outermost braces
         ]
 
         for pattern in json_patterns:
@@ -224,18 +235,18 @@ class LLMClient:
                     continue
 
         # Strategy 4: Try to find and parse the largest JSON-like block
-        start_idx = content.find('{')
+        start_idx = content.find("{")
         if start_idx != -1:
             # Find matching closing brace
             depth = 0
             for i, char in enumerate(content[start_idx:], start_idx):
-                if char == '{':
+                if char == "{":
                     depth += 1
-                elif char == '}':
+                elif char == "}":
                     depth -= 1
                     if depth == 0:
                         try:
-                            return json.loads(content[start_idx:i+1])
+                            return json.loads(content[start_idx : i + 1])
                         except json.JSONDecodeError:
                             break
 
@@ -258,3 +269,131 @@ class LLMClient:
         import asyncio
 
         return asyncio.run(self.complete(messages, config))
+
+    def _is_anthropic_model(self, model: str) -> bool:
+        """Check if the model is an Anthropic/Claude model.
+
+        Args:
+            model: Model name/ID
+
+        Returns:
+            True if model is from Anthropic
+        """
+        return "claude" in model.lower()
+
+    async def _complete_with_tool_use(
+        self,
+        messages: list[Message],
+        config: CompletionConfig,
+        schema: dict,
+        max_retries: int = 3,
+    ) -> dict[str, Any]:
+        """Generate structured output using Claude's tool_use.
+
+        This method uses a single tool with the desired schema to force
+        Claude to output in a specific JSON structure.
+
+        Args:
+            messages: List of chat messages
+            config: Completion configuration
+            schema: JSON schema to enforce
+            max_retries: Maximum number of retries
+
+        Returns:
+            Parsed JSON as dict matching the schema
+
+        Raises:
+            json.JSONDecodeError: If response cannot be parsed
+        """
+        # Define a tool with the schema
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "structured_output",
+                    "description": "Output the result in the specified JSON structure",
+                    "parameters": schema,
+                },
+            }
+        ]
+
+        # Force Claude to use this tool
+        tool_choice = {"type": "function", "function": {"name": "structured_output"}}
+
+        kwargs: dict[str, Any] = {
+            "model": config.model,
+            "messages": [m.to_dict() for m in messages],
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "top_p": config.top_p,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = await acompletion(**kwargs)
+
+                # Extract tool call arguments
+                message = response.choices[0].message
+
+                if hasattr(message, "tool_calls") and message.tool_calls:
+                    tool_call = message.tool_calls[0]
+                    if hasattr(tool_call, "function") and tool_call.function:
+                        arguments = tool_call.function.arguments
+                        if isinstance(arguments, str):
+                            return json.loads(arguments)
+                        return arguments
+
+                # Fallback: try to extract from content if no tool call
+                if message.content:
+                    parsed = self._extract_json(message.content)
+                    if parsed is not None:
+                        return parsed
+
+            except json.JSONDecodeError as e:
+                last_error = e
+            except Exception as e:
+                # If tool use fails, fall back to regular JSON mode on last attempt
+                if attempt == max_retries - 1:
+                    raise
+                last_error = e
+
+        if last_error:
+            raise last_error
+        raise json.JSONDecodeError("Failed to extract structured output", "", 0)
+
+    def _build_response_format(
+        self,
+        model: str,
+        schema: Optional[dict],
+        use_json_mode: bool,
+    ) -> Optional[dict]:
+        """Build response_format based on model and schema.
+
+        Args:
+            model: Model name/ID
+            schema: Optional JSON schema
+            use_json_mode: Whether to use JSON mode
+
+        Returns:
+            response_format dict or None
+        """
+        if not use_json_mode:
+            return None
+
+        # For OpenAI models with schema, use json_schema format
+        if schema and not self._is_anthropic_model(model):
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "output",
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+
+        # Default to basic json_object mode
+        return {"type": "json_object"}
